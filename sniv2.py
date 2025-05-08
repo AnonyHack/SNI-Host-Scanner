@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Bot configuration from environment variables
 CONFIG = {
     'token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
-    'admin_id': int(os.getenv('ADMIN_ID', '')),
+    'admin_ids': [int(admin_id) for admin_id in os.getenv('ADMIN_IDS', '').split(',') if admin_id],
     'required_channels': os.getenv('REQUIRED_CHANNELS', 'megahubbots,Freenethubz,Freenethubchannel').split(','),
     'channel_links': os.getenv('CHANNEL_LINKS', 'https://t.me/megahubbots,https://t.me/Freenethubz,https://t.me/Freenethubchannel').split(',')
 }
@@ -343,18 +343,74 @@ async def handle_generate_command(update: Update, context: CallbackContext):
     
     await update.message.reply_text(response)
 
+# Function to broadcast a message to all users
+async def broadcast(update: Update, context: CallbackContext):
+    """Broadcast a message to all users (admin only)."""
+    if update.effective_user.id not in CONFIG['admin_ids']:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("📢 ✨ Compose your broadcast message ✨\n\n"
+                                        "Please provide the message you'd like to send to all users.\n"
+                                        "You can include text, photos, or documents.\n\n"
+                                        "❌ Type 'Cancel' to abort.")
+        return
+
+    # Preserve the formatting of the message
+    message = update.message.text.replace("/broadcast", "").strip()
+    if not message:
+        await update.message.reply_text("❌ The broadcast message cannot be empty.")
+        return
+
+    users = users_collection.find({}, {'user_id': 1})
+    success = 0
+    failures = 0
+
+    progress_message = await update.message.reply_text(f"📨 Broadcast initiated...\n\n"
+                                                       f"📊 Total recipients: {users_collection.count_documents({})}\n"
+                                                       f"⏳ Status: Processing...\n\n"
+                                                       f"[░░░░░░░░░░] 0%")
+
+    total_users = users_collection.count_documents({})
+    update_interval = max(1, total_users // 10)
+
+    for index, user in enumerate(users):
+        try:
+            await context.bot.send_message(chat_id=user['user_id'], text=message, parse_mode="Markdown")
+            success += 1
+        except Exception as e:
+            logger.warning(f"Failed to send message to {user['user_id']}: {e}")
+            failures += 1
+
+        # Update progress periodically
+        if (index + 1) % update_interval == 0 or index + 1 == total_users:
+            progress = int((index + 1) / total_users * 100)
+            progress_bar = '█' * (progress // 10) + '░' * (10 - progress // 10)
+            await progress_message.edit_text(f"📨 Broadcast initiated...\n\n"
+                                             f"📊 Total recipients: {total_users}\n"
+                                             f"⏳ Status: Processing...\n\n"
+                                             f"[{progress_bar}] {progress}%")
+
+    await update.message.reply_text(f"📢 Broadcast completed!\n\n"
+                                     f"✅ Sent: {success}\n"
+                                     f"❌ Failed: {failures}\n\n"
+                                     f"✨ Thank you for using the broadcast system!")
+
+# Update the /stats command to allow only admins
 async def stats(update: Update, context: CallbackContext):
     """Show bot statistics (admin only)."""
-    if update.effective_user.id != CONFIG['admin_id']:
-        await update.message.reply_text("❌ You don't have permission to use this command.")
+    if update.effective_user.id not in CONFIG['admin_ids']:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
         return
-    
+
     user_count = count_users()
     scan_count = scans_collection.count_documents({})
     await update.message.reply_text(
         f"📊 Bot Statistics:\n"
         f"- Total Users: {user_count}\n"
         f"- Total Scans: {scan_count}"
+        f"━━━━━━━━━━━━━━━━━━\n"
     )
 
 async def how_to_use(update: Update, context: CallbackContext):
@@ -366,25 +422,33 @@ async def how_to_use(update: Update, context: CallbackContext):
         "3. 𝗦𝗰𝗮𝗻 𝗺𝘂𝗹𝘁𝗶𝗽𝗹𝗲 𝗵𝗼𝘀𝘁𝘀 : Upload a `.txt` file with hosts to scan them.\n"
         "4. 𝗚𝗲𝗻𝗲𝗿𝗮𝘁𝗲 𝗰𝗼𝘂𝗻𝘁𝗿𝘆-𝗯𝗮𝘀𝗲𝗱 𝗵𝗼𝘀𝘁𝘀 : Use /generate followed by the country name.\n"
         "5. 𝗙𝗼𝗿 𝗵𝗲𝗹𝗽 : Type /contactus to reach the support team.\n\n"
-        
         "✅ 𝙃𝙤𝙬 𝙩𝙤 𝙐𝙨𝙚 𝙩𝙝𝙚 𝘽𝙤𝙩❔\n\n"
-        "Below is a must watch video on how to use the Bot to avoid errors.\n\n"
-        "🔗 𝙑𝙞𝙙𝙚𝙤 𝙇𝙄𝙉𝙆 𝘽𝙚𝙡𝙤𝙬 👇\n"
-        "https://youtu.be/BdCdYcSrL80?si=nz9LJ7fWgcQQ_BCl\n\n"
+        "Below is a must-watch video on how to use the Bot to avoid errors.\n\n"
         "💙 𝐑𝐞𝐦𝐞𝐦𝐛𝐞𝐫 𝐭𝐨 𝐒𝐮𝐛𝐬𝐜𝐫𝐢𝐛𝐞 𝐭𝐨 𝐨𝐮𝐫 𝐘𝐨𝐮𝐓𝐮𝐛𝐞 𝐂𝐡𝐚𝐧𝐧𝐞𝐥 𝐟𝐨𝐫 𝐒𝐮𝐩𝐩𝐨𝐫𝐭."
     )
-    await update.message.reply_text(how_to_use_msg)
+    video_button = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Tᴜᴛᴏʀɪᴀʟ Cʟɪᴄᴋ Hᴇʀᴇ", url="https://youtu.be/BdCdYcSrL80?si=nz9LJ7fWgcQQ_BCl")]
+    ])
+    await update.message.reply_text(how_to_use_msg, reply_markup=video_button)
 
 async def contact_us(update: Update, context: CallbackContext):
     """Provide contact information."""
     contact_info_msg = (
-        "📞 𝗖𝗼𝗻𝘁𝗮𝗰𝘁 𝗨𝘀  📞\n\n"
-        "For any issues or inquiries, please reach out to our support team at:\n"
-        "𝗘𝗺𝗮𝗶𝗹 : freenethubbusiness@gmail.com\n"
-        "𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺 : @SILANDO\n\n"
-        "❗𝗢𝗡𝗟𝗬 𝗙𝗢𝗥 𝗕𝗨𝗦𝗜𝗡𝗘𝗦𝗦 𝗔𝗡𝗗 𝗛𝗘𝗟𝗣, 𝗗𝗢𝗡'𝗧 𝗦𝗣𝗔𝗠!"
+        "📞 ★彡( 𝕮𝖔𝖓𝖙𝖆𝖈𝖙 𝖀𝖘 )彡★ 📞\n\n"
+        "📧 Eᴍᴀɪʟ: `freenethubbusiness@gmail.com`\n\n"
+        "Fᴏʀ Aɴʏ Iꜱꜱᴜᴇꜱ, Bᴜꜱɪɴᴇꜱꜱ Dᴇᴀʟꜱ Oʀ IɴQᴜɪʀɪᴇꜱ, Pʟᴇᴀꜱᴇ Rᴇᴀᴄʜ Oᴜᴛ Tᴏ Uꜱ \n\n"
+        "❗ *ONLY FOR BUSINESS AND HELP, DON'T SPAM!*"
     )
-    await update.message.reply_text(contact_info_msg)
+    
+    keyboard = [[InlineKeyboardButton("📩 Mᴇꜱꜱᴀɢᴇ Aᴅᴍɪɴ", url="https://t.me/SILANDO")]]
+    
+    await update.message.reply_text(
+        contact_info_msg,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
 
 # === WEBHOOK SETUP ===
 async def health_check(request):
@@ -408,8 +472,9 @@ def main():
     application.add_handler(CommandHandler("generate", handle_generate_command))
     application.add_handler(MessageHandler(filters.Document.MimeType("text/plain"), handle_document))
     application.add_handler(CommandHandler("howtouse", how_to_use))
-    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("stats", stats))  # Updated stats command
     application.add_handler(CommandHandler("contactus", contact_us))
+    application.add_handler(CommandHandler("broadcast", broadcast))  # Updated /broadcast command
 
     # Start the bot with webhook if running on Render
     if os.getenv('RENDER'):
