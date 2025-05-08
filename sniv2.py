@@ -409,7 +409,7 @@ async def stats(update: Update, context: CallbackContext):
     await update.message.reply_text(
         f"📊 Bot Statistics:\n"
         f"- Total Users: {user_count}\n"
-        f"- Total Scans: {scan_count}"
+        f"- Total Scans: {scan_count}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
     )
 
